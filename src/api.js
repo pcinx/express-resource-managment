@@ -1,5 +1,6 @@
 var express = require('express');
 var cors = require('cors')
+const jwt = require('jsonwebtoken');
 const serverless = require('serverless-http');
 const mongoose = require('mongoose')
 const bodyParser = require('body-parser')
@@ -178,9 +179,9 @@ const init  = ()=>{
 //         console.log("Connected to MongoDB")
 //     }
 // })
-// const db = 'mongodb://localhost:27017/resourceManagerDB'
-const db = "mongodb+srv://pc810:pc810@pc810cluster.m1qx7.mongodb.net/resourceManagerDB";
+const db = process.env.db?process.env.db:'mongodb://localhost:27017/resourceManagerDB';
 const connectDB = async () =>{
+    console.log('process.env',process.env.db);
     await mongoose.connect(db,{
         useUnifiedTopology: true,
         useNewUrlParser: true
@@ -202,8 +203,41 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     next();
 });
+// Verify Token
+function verifyToken(req, res, next) {
+    const authHeader = req.headers['authorization']
+    const token = authHeader && authHeader.split(' ')[1]
+  
+    if (token == null) return res.sendStatus(401)
+  
+    jwt.verify(token, 'secretkey', (err, user) => {
+      console.log('user',user);
+      if (err) return res.sendStatus(403);
+      req.user = user
+      next()
+    })
+}  
+router.post('/login', async function (req, res) {
+    // console.log(req.body)
+    try{
+        let user = req.body.user;
 
-router.get('/test', async function (req, res) {
+        if(user.username === user.password){
+            jwt.sign({user}, 'secretkey', { expiresIn: '1000s' }, (err, token) => {
+                res.json({
+                  token
+                });
+            });
+        }else{
+            res.status(400).json({
+                error:"User credentials are not valid!"
+              });
+        }
+    }catch(error){
+        res.status(400).json({error:'cannot login'});
+    }
+})
+router.get('/test',verifyToken, async function (req, res) {
     let projects = await Project.find({}).populate('tech').populate('teamLead').select({"password":0,"__v":0}).populate('reviewer').select({"password":0,"__v":0});
     let employees = await Employee.find({}).select({"password":0,"__v":0});
     let technologies = await TechnologyType.find({});
@@ -230,7 +264,7 @@ router.get('/test', async function (req, res) {
         availableType:availableType
     });    
 })
-router.post('/projects',async function (req,res){
+router.post('/projects',verifyToken,async function (req,res){
     let sameNameProject = await Project.findOne({name:req.body.name});
     if(sameNameProject){
         res.status(400).json({error: `Project Name ${req.body.name} already exists!`});    
@@ -261,7 +295,7 @@ router.post('/projects',async function (req,res){
         }
     }
 })
-router.post('/responsibility',async function (req,res){
+router.post('/responsibility',verifyToken,async function (req,res){
     let employee = await Employee.findOne({userName:req.body.employee});
     let project = await Project.findById(req.body.project);
     let role = await RoleType.findOne({value:req.body.role});
@@ -300,7 +334,7 @@ router.post('/responsibility',async function (req,res){
     }
 })
 
-router.put('/responsibility/:id',function (req,res){
+router.put('/responsibility/:id',verifyToken,function (req,res){
     Responsibility.findById(req.params.id).populate("employee",{password:0}).populate("technology").then(async (responsibility)=>{
         let role = await RoleType.findOne({value:req.body.role});
         // let usedTech = await TechnologyType.find({value:{"$in":req.body.technologies}}).select({_id:1});
@@ -326,7 +360,7 @@ router.put('/responsibility/:id',function (req,res){
         res.status(400).json({error})
     })
 })
-router.delete('/responsibility/:id', async function (req,res){
+router.delete('/responsibility/:id',verifyToken, async function (req,res){
     Responsibility.findById(req.params.id).then(resp=>{
         console.log(resp);
         if(resp.role === "Team Lead" || resp.role==="Reviewer"){
@@ -340,13 +374,13 @@ router.delete('/responsibility/:id', async function (req,res){
     })
 })
 
-router.delete('/projects/:id', function (req,res){
+router.delete('/projects/:id', verifyToken,function (req,res){
     Project.deleteOne({_id:req.params.id}).then(async (stats)=>{        
         let projects = await Project.find({}).populate('tech').populate('teamLead').select({"password":0,"__v":0}).populate('reviewer').select({"password":0,"__v":0});
         res.status(200).json({projects:projects,deletedCount:stats.deletedCount});
     }).catch(error=>res.status(400).json({error}));
 })
-router.put('/projects/:id',async function (req,res){
+router.put('/projects/:id',verifyToken,async function (req,res){
     Project.findById(req.params.id).exec(async function(err,project){
         if(err) res.status(400).json(err);
         try{        
@@ -402,7 +436,7 @@ router.put('/projects/:id',async function (req,res){
     // let projects = await Project.find({}).populate('tech').populate('teamLead').populate('reviewer');
     // res.status(200).json({projects});
 })
-router.get('/projects/:id',function(req,res){
+router.get('/projects/:id',verifyToken,function(req,res){
     Project.findById(req.params.id)
     .populate('tech')
     .populate('teamLead')
@@ -421,7 +455,7 @@ router.get('/projects/:id',function(req,res){
         }
     })
 });
-router.put('/projects/clients/:id',function(req,res){    
+router.put('/projects/clients/:id',verifyToken,function(req,res){    
     if(req.params.id === ''){
         res.status(400).json({error:"No such client exist"});
     }else{
@@ -447,7 +481,7 @@ router.put('/projects/clients/:id',function(req,res){
     })
 }
 });
-router.delete('/projects/clients/:id',function(req,res){
+router.delete('/projects/clients/:id',verifyToken,function(req,res){
     Project.findById(req.params.id).then(project=>{
         if(project){ 
         Client.findById(req.body.clientId).then((client)=>{
@@ -474,7 +508,7 @@ router.delete('/projects/clients/:id',function(req,res){
         }
     }).catch(error=>res.status(400).json({error})) 
 });
-router.get('/resources/:id',function(req,res){
+router.get('/resources/:id',verifyToken,function(req,res){
     Employee.findById(req.params.id)
     .populate("technology")
     .exec(async function(err,resource){
@@ -486,7 +520,7 @@ router.get('/resources/:id',function(req,res){
         }
     })
 });
-router.post('/resources',async function (req,res){
+router.post('/resources',verifyToken,async function (req,res){
     let usedTech = await TechnologyType.find({value:{"$in":req.body.technology}}).select({_id:1});
     let tech = [];
     usedTech.map(t=>tech.push(t._id));
@@ -499,7 +533,7 @@ router.post('/resources',async function (req,res){
         res.status(200).json({employees});
     }).catch(error=>res.status(400).json({error}));
 })
-router.post('/clients',async function (req,res){
+router.post('/clients',verifyToken,async function (req,res){
     let client = new Client({
         ...req.body,
     });
@@ -508,7 +542,7 @@ router.post('/clients',async function (req,res){
         res.status(200).json({clients});
     }).catch(error=>res.status(400).json({error}));
 })
-router.put('/clients/:id',async function (req,res){
+router.put('/clients/:id',verifyToken,async function (req,res){
     Client.findById(req.params.id).select({ "__v":0}).exec(async function(err,client){
         if(err) res.status(400).json({error:err});
         try{        
@@ -526,7 +560,7 @@ router.put('/clients/:id',async function (req,res){
     }
     })
 })
-router.put('/resources/:id',async function (req,res){
+router.put('/resources/:id',verifyToken,async function (req,res){
     Employee.findById(req.params.id).select({ "__v":0}).exec(async function(err,employee){
         if(err) res.status(400).json({error:err});
     try{                    
@@ -559,7 +593,7 @@ router.put('/resources/:id',async function (req,res){
     }
     })
 })
-router.delete('/resources/:id', async function (req,res){
+router.delete('/resources/:id',verifyToken, async function (req,res){
     try {
         let employee = await Employee.findById(req.params.id);
         if((await Responsibility.findOne({employee:employee.id}))){
@@ -582,7 +616,7 @@ router.delete('/resources/:id', async function (req,res){
         res.status(400).json({error});
     }    
 })
-router.delete('/clients/:id', async function (req,res){
+router.delete('/clients/:id', verifyToken,async function (req,res){
     try {
         let stats = await Client.deleteOne({_id:req.params.id})
         let p = await Project.updateMany({clientList:req.params.id},{$pull:{clientList:req.params.id}});
@@ -600,7 +634,7 @@ router.delete('/clients/:id', async function (req,res){
         res.status(400).json({error});
     }    
 })
-router.post('/types/payment',async function (req,res){
+router.post('/types/payment',verifyToken,async function (req,res){
     let paymenttype = new PaymentType({
         ...req.body,
     });
@@ -609,7 +643,7 @@ router.post('/types/payment',async function (req,res){
         res.status(200).json({payment});
     }).catch(error=>res.status(400).json({error}));
 })
-router.post('/types/allocation',async function (req,res){
+router.post('/types/allocation',verifyToken,async function (req,res){
     let allocationtype = new AllocationType({
         ...req.body,
     });
@@ -618,7 +652,7 @@ router.post('/types/allocation',async function (req,res){
         res.status(200).json({allocation});
     }).catch(error=>res.status(400).json({error}));
 })
-router.post('/types/priority',async function (req,res){
+router.post('/types/priority',verifyToken,async function (req,res){
     let prioritytype = new PriorityType({
         ...req.body,
     });
@@ -627,7 +661,7 @@ router.post('/types/priority',async function (req,res){
         res.status(200).json({priority});
     }).catch(error=>res.status(400).json({error}));
 })
-router.post('/types/status',async function (req,res){
+router.post('/types/status',verifyToken,async function (req,res){
     let statustype = new StatusType({
         ...req.body,
     });
@@ -636,7 +670,7 @@ router.post('/types/status',async function (req,res){
         res.status(200).json({status});
     }).catch(error=>res.status(400).json({error}));
 })
-router.post('/types/role',async function (req,res){
+router.post('/types/role',verifyToken,async function (req,res){
     let roletype = new RoleType({
         ...req.body,
     });
@@ -645,7 +679,7 @@ router.post('/types/role',async function (req,res){
         res.status(200).json({role});
     }).catch(error=>res.status(400).json({error}));
 })
-router.post('/types/designation',async function (req,res){
+router.post('/types/designation',verifyToken,async function (req,res){
     let designationtype = new DesignationType({
         ...req.body,
     });
@@ -654,7 +688,7 @@ router.post('/types/designation',async function (req,res){
         res.status(200).json({designation});
     }).catch(error=>res.status(400).json({error}));
 })
-router.post('/types/technology',async function (req,res){
+router.post('/types/technology',verifyToken,async function (req,res){
     let technologytype = new TechnologyType({
         ...req.body,
     });
@@ -663,7 +697,7 @@ router.post('/types/technology',async function (req,res){
         res.status(200).json({technology});
     }).catch(error=>res.status(400).json({error}));
 })
-router.delete('/types/status/:id', async function (req,res){
+router.delete('/types/status/:id', verifyToken,async function (req,res){
     try {
         let status = await StatusType.findOne({_id:req.params.id});
         let stats = await StatusType.deleteOne({_id:req.params.id})
@@ -684,7 +718,7 @@ router.delete('/types/status/:id', async function (req,res){
         res.status(400).json({error});
     }      
 })
-router.delete('/types/priority/:id', async function (req,res){
+router.delete('/types/priority/:id',verifyToken, async function (req,res){
     try {
         let priority = await PriorityType.findOne({_id:req.params.id});
         let stats = await PriorityType.deleteOne({_id:req.params.id})
@@ -704,7 +738,7 @@ router.delete('/types/priority/:id', async function (req,res){
         res.status(400).json({error});
     }      
 });
-router.delete('/types/payment/:id', async function (req,res){
+router.delete('/types/payment/:id', verifyToken,async function (req,res){
     try {
         let payment = await PaymentType.findOne({_id:req.params.id});
         let stats = await PaymentType.deleteOne({_id:req.params.id})
@@ -724,7 +758,7 @@ router.delete('/types/payment/:id', async function (req,res){
         res.status(400).json({error});
     }      
 });
-router.delete('/types/allocation/:id', async function (req,res){
+router.delete('/types/allocation/:id',verifyToken, async function (req,res){
     try {
         let allocation = await AllocationType.findOne({_id:req.params.id});
         let stats = await AllocationType.deleteOne({_id:req.params.id})
@@ -744,7 +778,7 @@ router.delete('/types/allocation/:id', async function (req,res){
         res.status(400).json({error});
     }      
 });
-router.delete('/types/role/:id', async function (req,res){
+router.delete('/types/role/:id', verifyToken,async function (req,res){
     try {
         let role = await RoleType.findOne({_id:req.params.id});
         if(await Responsibility.findOne({role:role.value})){
@@ -761,7 +795,7 @@ router.delete('/types/role/:id', async function (req,res){
         res.status(400).json({error});
     }      
 });
-router.delete('/types/technology/:id', async function (req,res){
+router.delete('/types/technology/:id',verifyToken, async function (req,res){
     try {
         let technology = await TechnologyType.findOne({_id:req.params.id});
         let projectUsingTech = await Project.findOne({tech:{$in:technology.id}});
@@ -781,7 +815,7 @@ router.delete('/types/technology/:id', async function (req,res){
         res.status(400).json({error});
     }      
 });
-router.delete('/types/designation/:id', async function (req,res){
+router.delete('/types/designation/:id',verifyToken, async function (req,res){
     try {
         let designation = await DesignationType.findOne({_id:req.params.id});
         if(await Employee.findOne({designation:designation.value})){
@@ -798,7 +832,7 @@ router.delete('/types/designation/:id', async function (req,res){
         res.status(400).json({error});
     }      
 });
-router.put('/types/status/:id', async function (req,res){
+router.put('/types/status/:id', verifyToken,async function (req,res){
     try {
         let status = await StatusType.findOne({_id:req.params.id}).select({"__v":0});
         let oldStatusValue = status.value;
@@ -834,7 +868,7 @@ router.put('/types/status/:id', async function (req,res){
         res.status(400).json({error});
     }      
 })
-router.put('/types/priority/:id', async function (req,res){
+router.put('/types/priority/:id', verifyToken,async function (req,res){
     try {
         let priority = await PriorityType.findOne({_id:req.params.id}).select({"__v":0});
         let oldPriorityValue = priority.value;
@@ -872,7 +906,7 @@ router.put('/types/priority/:id', async function (req,res){
         res.status(400).json({error});
     }      
 })
-router.put('/types/payment/:id', async function (req,res){
+router.put('/types/payment/:id', verifyToken,async function (req,res){
     try {
         let payment = await PaymentType.findOne({_id:req.params.id}).select({"__v":0});
         let oldPaymentValue = payment.value;
@@ -910,7 +944,7 @@ router.put('/types/payment/:id', async function (req,res){
         res.status(400).json({error});
     }      
 })
-router.put('/types/allocation/:id', async function (req,res){
+router.put('/types/allocation/:id',verifyToken, async function (req,res){
     try {
         let allocation = await AllocationType.findOne({_id:req.params.id}).select({"__v":0});
         let oldAllocationValue = allocation.value;
@@ -948,7 +982,7 @@ router.put('/types/allocation/:id', async function (req,res){
         res.status(400).json({error});
     }      
 })
-router.put('/types/role/:id', async function (req,res){
+router.put('/types/role/:id',verifyToken, async function (req,res){
     try {
         let role = await RoleType.findOne({_id:req.params.id}).select({"__v":0});
         let oldRoleValue = role.value;
@@ -980,7 +1014,7 @@ router.put('/types/role/:id', async function (req,res){
         res.status(400).json({error});
     }      
 })
-router.put('/types/designation/:id', async function (req,res){
+router.put('/types/designation/:id',verifyToken, async function (req,res){
     try {
         let designation = await DesignationType.findOne({_id:req.params.id}).select({"__v":0});
         let oldDesignationValue = designation.value;
@@ -1012,7 +1046,7 @@ router.put('/types/designation/:id', async function (req,res){
         res.status(400).json({error});
     }      
 })
-router.put('/types/technology/:id', async function (req,res){
+router.put('/types/technology/:id', verifyToken,async function (req,res){
     try {
         let technology = await TechnologyType.findOne({_id:req.params.id});
         let projectUsingTech = await Project.findOne({tech:{$in:technology.id}});
