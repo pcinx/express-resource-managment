@@ -481,10 +481,12 @@ router.put('/projects/clients/:id',verifyToken,function(req,res){
     })
 }
 });
-router.delete('/projects/clients/:id',verifyToken,function(req,res){
-    Project.findById(req.params.id).then(project=>{
+router.delete('/projects/:projectId/clients/:clientId',verifyToken,function(req,res){
+    Project.findById(req.params.projectId).then(project=>{
         if(project){ 
-        Client.findById(req.body.clientId).then((client)=>{
+        Client.findById(req.params.clientId).then((client)=>{
+            console.log('client',client)
+            console.log('req.params.clientId',req.params.clientId)
             if(!client){
                 res.status(400).json({error:"Client does not exist"});
             }
@@ -541,6 +543,18 @@ router.post('/clients',verifyToken,async function (req,res){
         let clients = await Client.find({});
         res.status(200).json({clients});
     }).catch(error=>res.status(400).json({error}));
+})
+router.get('/clients/:id',async function (req,res){
+    Client.findById(req.params.id).select({ "__v":0}).exec(async function(err,client){
+        console.log(client)
+        if(err) res.status(400).json({error:err});
+        try{        
+            let projects = await Project.find({clientList:{$in:client.id}}).select({"_id":1});        
+            res.status(200).json({client:client,projects:projects?projects:[]});                    
+        }catch(error){
+            res.status(400).json({error});
+        }
+    })
 })
 router.put('/clients/:id',verifyToken,async function (req,res){
     Client.findById(req.params.id).select({ "__v":0}).exec(async function(err,client){
